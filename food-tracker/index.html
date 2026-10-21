@@ -270,6 +270,26 @@
         gap: 8px;
         margin-top: 18px;
       }
+      .scan-box {
+        margin-bottom: 16px;
+        padding: 13px;
+        border: 1px dashed #cbd6e6;
+        border-radius: 12px;
+        background: #f7f9fe;
+      }
+      .scan-box button {
+        width: 100%;
+      }
+      .scan-status {
+        min-height: 1.4em;
+        margin: 8px 0 0;
+      }
+      .scan-status.error {
+        color: #b12b3e;
+      }
+      .scan-status.success {
+        color: #21824b;
+      }
       @media (max-width: 760px) {
         header {
           align-items: flex-start;
@@ -782,6 +802,21 @@
     <dialog id="dialog">
       <form method="dialog" class="panel" id="customForm">
         <h2 class="sectiontitle" id="customDialogTitle">登记新食品</h2>
+        <div class="scan-box" id="nutritionScanBox">
+          <button class="soft" id="scanNutrition" type="button">
+            📷 拍摄营养成分表并自动填写
+          </button>
+          <input
+            id="nutritionPhoto"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            capture="environment"
+            hidden
+          />
+          <p class="fine scan-status" id="scanStatus" role="status">
+            请拍清楚食品名称、每份含量和营养素数值。
+          </p>
+        </div>
         <div class="field">
           <label for="customName">名称</label
           ><input
@@ -1453,6 +1488,104 @@
           $("manualForm").reset();
           alert("已保存本次摄入。");
         });
+
+        function setScanStatus(message, type = "") {
+          const status = $("scanStatus");
+          status.textContent = message;
+          status.className = `fine scan-status ${type}`.trim();
+        }
+
+        function loadImageFile(file) {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onerror = () => reject(Error("无法读取图片"));
+            reader.onload = () => {
+              const image = new Image();
+              image.onerror = () => reject(Error("图片格式无法识别"));
+              image.onload = () => resolve(image);
+              image.src = reader.result;
+            };
+            reader.readAsDataURL(file);
+          });
+        }
+
+        async function prepareNutritionPhoto(file) {
+          if (!file.type.startsWith("image/")) throw Error("请选择图片文件");
+          if (file.size > 12 * 1024 * 1024) throw Error("图片不能超过 12MB");
+          const image = await loadImageFile(file);
+          const maxSide = 1800;
+          const scale = Math.min(
+            1,
+            maxSide / Math.max(image.width, image.height),
+          );
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(image.width * scale));
+          canvas.height = Math.max(1, Math.round(image.height * scale));
+          const context = canvas.getContext("2d");
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          return canvas.toDataURL("image/jpeg", 0.86);
+        }
+
+        function applyNutritionScan(result) {
+          if (!result.found) throw Error(result.notes || "未识别到营养成分表");
+          if (result.name) $("customName").value = result.name.slice(0, 60);
+          $("customBasis").value = result.basisMode;
+          $("customBasisAmount").value =
+            result.basisMode === "amount" ? result.basisAmount : "";
+          if (result.basisUnit) $("customBasisUnit").value = result.basisUnit;
+          $("customServingGrams").value = "";
+          for (const [key, id] of [
+            ["protein", "customProtein"],
+            ["carbs", "customCarbs"],
+            ["fat", "customFat"],
+          ]) {
+            $(id).value = result[key] ?? "";
+          }
+          const macros = [result.protein, result.carbs, result.fat];
+          $("customCal").value =
+            result.kcal ??
+            (macros.every(Number.isFinite) ? macroKcal(...macros) : "");
+          customAuto.load();
+          updateBasisDescription();
+        }
+
+        $("scanNutrition").addEventListener("click", () =>
+          $("nutritionPhoto").click(),
+        );
+        $("nutritionPhoto").addEventListener("change", async (event) => {
+          const file = event.target.files[0];
+          if (!file) return;
+          const button = $("scanNutrition");
+          button.disabled = true;
+          setScanStatus("正在压缩并识别营养成分表…");
+          try {
+            const { data } = await sb.auth.getSession();
+            if (!data.session?.access_token) throw Error("请先登录后再识别");
+            const image = await prepareNutritionPhoto(file);
+            const response = await fetch(
+              "/.netlify/functions/analyze-nutrition",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${data.session.access_token}`,
+                },
+                body: JSON.stringify({ image }),
+              },
+            );
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok)
+              throw Error(payload.error || `识别失败（${response.status}）`);
+            applyNutritionScan(payload);
+            setScanStatus("识别完成，请核对数值后再保存。", "success");
+          } catch (error) {
+            setScanStatus(error.message || "识别失败，请重试。", "error");
+          } finally {
+            button.disabled = false;
+            event.target.value = "";
+          }
+        });
+
         function openCustomDialog(food = null) {
           editingFoodId = food ? food.id : null;
           $("customDialogTitle").textContent = food
@@ -1461,6 +1594,7 @@
           $("saveCustom").textContent = food ? "保存修改" : "保存食物";
           $("customForm").reset();
           customAuto.reset();
+          setScanStatus("请拍清楚食品名称、每份含量和营养素数值。");
           if (food) {
             customAuto.load();
             $("customName").value = food.name;
