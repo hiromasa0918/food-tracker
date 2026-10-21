@@ -6,14 +6,19 @@
   "use strict";
 
   const macroKcal = (protein, carbs, fat) => protein * 4 + carbs * 4 + fat * 9;
-  const perServing = food => Boolean(food) && food.basis === "serving";
-  const measureUnit = food => {
+  const perServing = (food) => Boolean(food) && food.basis === "serving";
+  const measureUnit = (food) => {
     if (perServing(food)) return food?.servingUnit === "ml" ? "ml" : "g";
     if (food?.basisUnit === "ml" || food?.basis === "100ml") return "ml";
     return "g";
   };
 
-  const basisAmount = food => perServing(food) ? 1 : Number(food?.basisAmount) > 0 ? Number(food.basisAmount) : 100;
+  const basisAmount = (food) =>
+    perServing(food)
+      ? 1
+      : Number(food?.basisAmount) > 0
+        ? Number(food.basisAmount)
+        : 100;
 
   function amountFor(food, quantity, unit) {
     const servingSize = Number(food.servingGrams);
@@ -28,7 +33,7 @@
   // Arithmetic input with a small whitelist-based parser; no eval or Function.
   function mathValue(value) {
     const src = String(value)
-      .replace(/[０-９]/g, char => String(char.charCodeAt(0) - 65296))
+      .replace(/[０-９]/g, (char) => String(char.charCodeAt(0) - 65296))
       .replace(/[×✕ｘ]/g, "*")
       .replace(/[÷]/g, "/")
       .replace(/[＋]/g, "+")
@@ -40,8 +45,14 @@
 
     let position = 0;
     function primary() {
-      if (src[position] === "+") { position += 1; return primary(); }
-      if (src[position] === "-") { position += 1; return -primary(); }
+      if (src[position] === "+") {
+        position += 1;
+        return primary();
+      }
+      if (src[position] === "-") {
+        position += 1;
+        return -primary();
+      }
       if (src[position] === "(") {
         position += 1;
         const number = expression();
@@ -80,6 +91,12 @@
     }
   }
 
-  return { macroKcal, perServing, measureUnit, basisAmount, amountFor, mathValue };
+  return {
+    macroKcal,
+    perServing,
+    measureUnit,
+    basisAmount,
+    amountFor,
+    mathValue,
+  };
 });
-
